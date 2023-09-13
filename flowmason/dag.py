@@ -172,7 +172,7 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict, experiment_name: str)
         run_num = len(os.listdir(experiment_dir))
         run_num_str = str(run_num).zfill(4)
         run_fname = os.path.join(experiment_dir, f"run_{run_num_str}.json")
-    steps_metadata= {}
+    steps_metadata= []
     for step_name in experiment_steps:
         # step_name, step_fn, step_kwargs = step
         step_fn = step_wrapper(experiment_steps[step_name][0])
@@ -182,9 +182,9 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict, experiment_name: str)
         step_kwargs["step_name"] = step_name
         result_cache_path, execution_status = step_fn(**step_kwargs)
         end_time = datetime.datetime.now().strftime("%H:%M:%S")
-        steps_metadata[step_name] = create_metadata(step_version, step_kwargs, start_time, end_time,
+        metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
                                                     result_cache_path, execution_status)
-
+        steps_metadata.append((step_name, metadata)) 
     # write the metadata to a json file.
     with open(run_fname, 'w') as f:
         json.dump(steps_metadata, f, indent=4)
