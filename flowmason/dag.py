@@ -12,7 +12,10 @@ logger = loguru.logger
 
 def create_metadata(step_version, 
                  step_kwargs, start_time: str, end_time: str,
-                 cache_path: str, execution_status: str):
+                 cache_dir: str, execution_status: str):
+    cache_name = _get_step_cache_name(step_kwargs['step_name'], step_version, step_kwargs)
+    hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
+    hashed_fcache_name = os.path.join(cache_dir, hash_name)
     return {
             "version": step_version,
             "date": datetime.datetime.now().strftime("%Y-%m-%d"),
@@ -20,7 +23,7 @@ def create_metadata(step_version,
             "end_time": end_time,
             "kwargs": step_kwargs,
             "execution_status": execution_status,
-            "cache_path": cache_path
+            "cache_path": hashed_fcache_name
     }
 
 def cache_result(cache_dir: str, step_name, step_version, step_kwargs, result: Any):
@@ -104,15 +107,15 @@ def meta_step(steps: OrderedDict[str, Tuple[Callable, Dict[str, str]]],
     
     def step(step_func):
         def wrapper(*args, **kwargs):
-            if step not in steps_to_execute:
+            step_name = kwargs["step_name"]
+            step_version = kwargs["version"]
+            if step_name not in steps_to_execute:
                 cache_name = _get_step_cache_name(step_name, step_version, kwargs)
                 hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
                 hashed_fcache_name = os.path.join(cache_dir, hash_name)
                 logger.info(f"Step {step_name} is cached at {hashed_fcache_name}, continuing.")
                 return hashed_fcache_name, "cached"
             # TODO: right now, the step does not get re-executed when one of the dependencies are out of date.
-            step_name = kwargs["step_name"]
-            step_version = kwargs["version"]
             logger.info(f"Running step {step_name}")
 
             #### DAG input logic goes here. ####:
@@ -123,10 +126,10 @@ def meta_step(steps: OrderedDict[str, Tuple[Callable, Dict[str, str]]],
                     continue
                 if value in all_steps: # substitute the value with the result of the step.
                     value_step_name = value
-                    kwargs[key] = load_from_cache(value_step_name, steps[value_step_name][1]['version'], steps[value_step_name][1])
+                    kwargs[key] = load_from_cache(cache_dir, value_step_name, steps[value_step_name][1]['version'], steps[value_step_name][1])
             result = step_func(*args, **kwargs)
             if result is not None:
-                cache_path = cache_result(step_name, step_version, original_kwargs, result)
+                cache_path = cache_result(cache_dir, step_name, step_version, original_kwargs, result)
                 return cache_path, "executed"
             else:
                 logger.info(f"Step {step_name} returned None, not caching.")
@@ -183,7 +186,7 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict, experiment_name: str)
         result_cache_path, execution_status = step_fn(**step_kwargs)
         end_time = datetime.datetime.now().strftime("%H:%M:%S")
         metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
-                                                    result_cache_path, execution_status)
+                                   cache_dir, execution_status)
         steps_metadata.append((step_name, metadata)) 
     # write the metadata to a json file.
     with open(run_fname, 'w') as f:
