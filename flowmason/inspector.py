@@ -3,7 +3,7 @@ from typing import Tuple, Dict
 import json
 import os
 
-def load_latest_step_artifact(experiment_name: str):
+def load_latest_steps(experiment_name: str):
     # load the latest file. It will be run_####.json under
     # outputs/{experiment_name}
     # the latest one will have the highest number.
