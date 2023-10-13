@@ -1,5 +1,5 @@
 # flowmason
-A lightweight orchestration management framework for wrangling messy experiments and encouraging exploration
+A lightweight orchestration framework for wrangling messy experiments and encouraging exploration
 
 # Installation
 ```
