@@ -13,6 +13,7 @@ Upload to PyPi is forthcoming.
 # Example usage
 ```
 from collections import OrderedDict
+import os
 
 # implementations of steps here...
 
