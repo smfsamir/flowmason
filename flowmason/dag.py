@@ -11,17 +11,17 @@ import os
 import json
 
 @dataclass
-class MapReduceStep:
-    step_fns: OrderedDict[str, Callable]
-    map_params: Dict[str, List] 
-    constant_params: Dict[str, Any] 
-    reduce_fn: Callable
-
-@dataclass
 class SingletonStep:
     step_fn: Callable
     step_params: Dict[str, Any]
-# TODO: make the cache dir an argument to the conduct function.
+
+@dataclass
+class MapReduceStep:
+    step_fns: OrderedDict[str, SingletonStep]
+    map_params: Dict[str, List] 
+    constant_params: Dict[str, Any]
+    reduce_fn: Callable
+
 CACHE_DIR = "cache"
 logger = loguru.logger
 
@@ -42,7 +42,6 @@ def create_metadata(step_version,
     }
 
 def cache_result(cache_dir: str, step_name, step_version, step_kwargs, result: Any):
-    # TODO: add cache folder
     cache_name = _get_step_cache_name(step_name, step_version, step_kwargs)
 
     os.makedirs(cache_dir, exist_ok=True)
@@ -52,10 +51,9 @@ def cache_result(cache_dir: str, step_name, step_version, step_kwargs, result: A
     with open(os.path.join(cache_dir, str(cache_hashed_name)), 'wb') as f:
         dill.dump(result, f)
     # return the cache path
-    return os.path.join(cache_dir, cache_name)
+    return os.path.join(cache_dir, cache_hashed_name)
 
 def load_from_cache(cache_dir, step_name, step_version, step_kwargs):
-    # TODO: add cache folder.
     cache_name = _get_step_cache_name(step_name, step_version, step_kwargs)
     cache_hashed_name = hashlib.sha256(cache_name.encode()).hexdigest()
 
@@ -81,7 +79,7 @@ def _get_step_cache_name(step_name, step_version, step_kwargs):
     return f"{step_name}-{step_version}-{kwarg_str}.dill" if kwarg_str else f"{step_name}-{step_version}.dill"
 
 # TODO: need to re-write this so it can check for both types of steps.
-def _check_should_execute(curr_step: str, curr_step_arguments: Dict[str, str], 
+def _check_should_execute(curr_step: str, curr_step_arguments: Dict[str, Any], 
                           cache_dir: str,
                           previous_steps_to_execute: List[str]):
     cache_name = _get_step_cache_name(curr_step, curr_step_arguments['version'], curr_step_arguments)
@@ -94,7 +92,6 @@ def _check_should_execute(curr_step: str, curr_step_arguments: Dict[str, str],
         return True
     return False
 
-# TODO: need to amend so that it takes in the dependency map as well.
 def step_wrapper(step_func, cache_map: Dict[str, str], cache_dir: str):
     def wrapper(*args, **kwargs):
         step_name = kwargs["step_name"]
@@ -108,7 +105,7 @@ def step_wrapper(step_func, cache_map: Dict[str, str], cache_dir: str):
             if value == step_name:
                 continue
             if value in cache_map: # substitute the value with the result of the step.
-                kwargs[key] = dill.load(cache_map[value])
+                kwargs[key] = dill.load(open(cache_map[value], 'rb'))
         result = step_func(*args, **kwargs)
         if result is not None:
             cache_path = cache_result(cache_dir, step_name, step_version, original_kwargs, result)
@@ -118,8 +115,9 @@ def step_wrapper(step_func, cache_map: Dict[str, str], cache_dir: str):
             return "no result to cache", "executed"
     return wrapper
 
-# TODO: need to think about what the parameter should be.
-def execute_map_reduce_step(mapreduce_step_name, map_reduce_step: MapReduceStep, cache_map: Dict[str, str], cache_dir: str):
+def execute_map_reduce_step(mapreduce_step_name: str, 
+                            map_reduce_step: MapReduceStep, 
+                            cache_map: Dict[str, str], cache_dir: str):
     # thing to be careful about: ensure that map_param invariant steps are not cached
     ## in order to do that, we should:
     ### create a different cache directory for map reduce steps
@@ -131,19 +129,24 @@ def execute_map_reduce_step(mapreduce_step_name, map_reduce_step: MapReduceStep,
     for i in range(len(num_map_param_settings)):
         map_param_setting_cache = {}
         map_kwargs = {k: v[i] for k, v in map_params.items()}
-        map_kwargs.update(map_reduce_step.constant_params)
-        for step_name, step_fn in map_reduce_step.step_fns.items():
+        # add the constant params to the map_kwargs
+        map_kwargs = {**map_kwargs, **map_reduce_step.constant_params}
+        for singleton_step_name, singleton_step_impl in map_reduce_step.step_fns.items():
             # combine cache map with map_param_setting_cache
-            step_fn = step_wrapper(step_fn, {**cache_map, **map_param_setting_cache}, cache_dir)
+            step_fn = step_wrapper(singleton_step_impl.step_fn, 
+                                   {**cache_map, **map_param_setting_cache}, # NOTE: there will be an overwrite issue here, if one of the map reduce step was also an external singleton step. But that shouldn't be happening anyway, since step names should be unique.
+                                   cache_dir)
             step_version = map_kwargs["version"]
             start_time = datetime.datetime.now().strftime("%H:%M:%S")
-            map_kwargs["step_name"] = step_name
-            result_cache_path, execution_status = step_fn(**map_kwargs)
+            map_kwargs["step_name"] = f"{mapreduce_step_name}_{singleton_step_name}_{i}"
+            # call step fn on the union of the map kwargs and the singleton step kwargs, overriding the map kwargs when there is a conflict.
+            fn_kwargs = {**map_kwargs, **singleton_step_impl.step_params}
+            result_cache_path, execution_status = step_fn(**fn_kwargs) 
             end_time = datetime.datetime.now().strftime("%H:%M:%S")
             metadata = create_metadata(step_version, map_kwargs, start_time, end_time,
                                     cache_dir, execution_status)
-            map_reduce_mapdata.append((step_name, metadata))
-            map_param_setting_cache[step_name] = result_cache_path
+            map_reduce_mapdata.append([singleton_step_name, metadata])
+            map_param_setting_cache[singleton_step_name] = result_cache_path
         final_result_paths.append(result_cache_path) 
     # use the reduce function to combine the results.
     reduce_fn = map_reduce_step.reduce_fn
@@ -165,15 +168,27 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
         run_num_str = str(run_num).zfill(4)
         run_fname = os.path.join(experiment_dir, f"run_{run_num_str}.json")
     steps_to_execute = []
-    for step in experiment_steps:
-        pdb.set_trace()
-        should_execute = _check_should_execute(step, experiment_steps[step][1], cache_dir, steps_to_execute)
+    for curr_step_name, curr_step_impl in experiment_steps.items():
+        if isinstance(curr_step_impl, SingletonStep):
+            should_execute = _check_should_execute(curr_step_name, 
+                                                curr_step_impl.step_params, 
+                                                cache_dir, 
+                                                steps_to_execute)
+        elif isinstance(curr_step_impl, MapReduceStep):
+            # the params are the combination of the map params and the constant params.
+            should_execute = _check_should_execute(curr_step_name,
+                                                {**curr_step_impl.map_params, 
+                                                 **curr_step_impl.constant_params},
+                                                cache_dir,
+                                                steps_to_execute)
+        else:
+            raise ValueError(f"Step {curr_step_name} is not a valid step type.")
         if should_execute:
-            steps_to_execute.append(step) 
+            steps_to_execute.append(curr_step_name) 
 
     steps_metadata = []
     cache_map = {}
-    for exp_step_name, step_impl in experiment_steps.items(): # TODO: this will be a data-class instead of a tuple.
+    for exp_step_name, step_impl in experiment_steps.items(): 
         if exp_step_name not in steps_to_execute:
             cache_name = _get_step_cache_name(exp_step_name, step_impl.step_params['version'], step_impl.step_params)
             hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
@@ -189,8 +204,6 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
             step_version = step_kwargs["version"]
             start_time = datetime.datetime.now().strftime("%H:%M:%S")
             step_kwargs["step_name"] = exp_step_name
-            # TODO: we should keep a dictionary of the cache paths for each step, so that they 
-            # can be used as dependencies for subsequent steps.
             result_cache_path, execution_status = step_fn(**step_kwargs)
             end_time = datetime.datetime.now().strftime("%H:%M:%S")
             metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
@@ -198,21 +211,17 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
             steps_metadata.append((exp_step_name, metadata))
             cache_map[exp_step_name] = result_cache_path
         elif isinstance(step_impl, MapReduceStep):
+            start_time = datetime.datetime.now().strftime("%H:%M:%S")
             result_cache_path, map_red_metadata = execute_map_reduce_step(exp_step_name, step_impl, cache_map, cache_dir)
-            steps_metadata.append((exp_step_name, map_red_metadata))
-            cache_map[exp_step_name] = map_red_metadata
+            end_time = datetime.datetime.now().strftime("%H:%M:%S")
+            final_metadata = create_metadata(step_impl.constant_params["version"],
+                                             {**step_impl.map_params, **step_impl.constant_params, "step_name": exp_step_name},
+                                            start_time, end_time, execution_status="executed",
+                                            cache_dir=cache_dir)
+            map_red_metadata.append(final_metadata)
+            steps_metadata.append([exp_step_name, map_red_metadata])
+            cache_map[exp_step_name] = result_cache_path
             
-        # step_name, step_fn, step_kwargs = step
-        # step_fn = step_wrapper(step_impl.step_fn)
-        # step_kwargs = step_impl.step_params
-        # step_version = step_kwargs["version"]
-        # start_time = datetime.datetime.now().strftime("%H:%M:%S")
-        # step_kwargs["step_name"] = exp_step_name # TODO: do we need this?
-        # result_cache_path, execution_status = step_fn(**step_kwargs)
-        # end_time = datetime.datetime.now().strftime("%H:%M:%S")
-        # metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
-        #                         cache_dir, execution_status)
-        # steps_metadata.append((exp_step_name, metadata)) 
     # write the metadata to a json file.
     with open(run_fname, 'w') as f:
         json.dump(steps_metadata, f, indent=4)
