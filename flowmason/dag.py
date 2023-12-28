@@ -199,6 +199,8 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
             metadata = create_metadata(step_impl.step_params['version'], step_impl.step_params, "00:00:00", "00:00:00",
                                     cache_dir, "cached")
             steps_metadata.append((exp_step_name, metadata))
+            # add to cache map
+            cache_map[exp_step_name] = hashed_fcache_name
             continue
         if isinstance(step_impl, SingletonStep):
             step_fn = step_wrapper(step_impl.step_fn, cache_map, cache_dir)
