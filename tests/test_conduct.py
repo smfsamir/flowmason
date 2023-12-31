@@ -108,3 +108,102 @@ def test_parameter_passing():
     assert my_function(parameter="hello") == "hello"
     assert my_function(**{"parameter": "hello"}) == "hello"
     assert my_function("hello", x=3)
+
+# TODO: fill in
+def test_singleton_step_caching(cache_dir):
+    # create a singleton step. Then, run conduct once. Check that the
+    # function execution status is "executed" by checking the metadata.
+    # Then, run conduct again. Check that the function execution status
+    # is "cached" in "run_0001.json"
+    singleton_step = SingletonStep(_step_toy_fn, {
+        'version': "001", 
+        'arg1': 2.9
+    })
+    step_dict = OrderedDict()
+    step_dict['step_singleton'] = singleton_step
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0000.json", 'r') as f:
+        obj = json.load(f)
+        assert obj[0][1]['execution_status'] == "executed"
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0001.json", 'r') as f:
+        obj = json.load(f)
+        # assert obj[0][1]['execution_status'] == "cached"
+
+# TODO: fill in
+def test_map_reduce_step_caching(cache_dir):
+    # create a map reduce step. Then, run conduct once. Check that the
+    # function execution status is "executed" by checking the metadata.
+    # Then, run conduct again. Check that the function execution status
+    # is "cached" in "run_0001.json"
+    map_reduce_step = MapReduceStep(
+        {"step_toy_fn": SingletonStep(_step_toy_fn, {
+            'version': '001'
+        }), 
+        "step_toy_fn_two": SingletonStep(_step_toy_fn, {
+            'version': '001',
+            'arg1': 'step_toy_fn'
+        })},
+        {"arg1": [2.9, 3.0, 3.1]}, 
+        {"version": "001"}, 
+        sum)
+    step_dict = OrderedDict()
+    step_dict['step_map_reduce'] = map_reduce_step
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0000.json", 'r') as f:
+        obj = json.load(f)
+        assert obj[0][1][-1]['execution_status'] == "executed"
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0001.json", 'r') as f:
+        obj = json.load(f)
+        assert obj[0][1]['execution_status'] == "cached"
+
+def test_map_reduce_should_execute_updated_singletons(cache_dir):
+    # create a map reduce step with two singletons. Run conduct once.
+    # then, change the second singleton's version. Run conduct again.
+    # Check that the second singleton's execution status is "executed", 
+    # while the first singleton's execution status is "cached"
+
+    map_reduce_step = MapReduceStep(
+        {"step_toy_fn": SingletonStep(_step_toy_fn, {
+            'version': '001'
+        }), 
+        "step_toy_fn_two": SingletonStep(_step_toy_fn, {
+            'version': '001',
+            'arg1': 'step_toy_fn'
+        })},
+        {"arg1": [2.9, 3.0, 3.1]}, 
+        {"version": "001"}, 
+        sum)
+    step_dict = OrderedDict()
+    step_dict['step_map_reduce'] = map_reduce_step
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0000.json", 'r') as f:
+        obj = json.load(f)
+        first_step_index = 0
+        second_step_index = 1
+        assert obj[0][1][first_step_index][1]['execution_status'] == "executed"
+        assert obj[0][1][second_step_index][1]['execution_status'] == "executed"
+    
+    map_reduce_step = MapReduceStep(
+        {"step_toy_fn": SingletonStep(_step_toy_fn, {
+            'version': '001'
+        }),
+        "step_toy_fn_two": SingletonStep(_step_toy_fn, {
+            'version': '002',
+            'arg1': 'step_toy_fn'
+        })},
+        {"arg1": [2.9, 3.0, 3.1]}, 
+        {"version": "001"},
+        sum)
+    step_dict = OrderedDict()
+    step_dict['step_map_reduce'] = map_reduce_step
+    conduct(cache_dir, step_dict, "test_orchestration")
+
+    with open("outputs/test_orchestration/run_0001.json", 'r') as f:
+        obj = json.load(f)
+        first_step_index = 0
+        second_step_index = 1
+        # TODO: need to fix this
+        assert obj[0][1][first_step_index][1]['execution_status'] == "cached"
+        assert obj[0][1][second_step_index][1]['execution_status'] == "executed"
