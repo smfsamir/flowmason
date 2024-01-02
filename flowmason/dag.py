@@ -297,51 +297,60 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
 
     steps_metadata = []
     cache_map = {}
-    for exp_step_name, step_impl in experiment_steps.items(): 
-        if exp_step_name not in steps_to_execute:
-            exp_step_version = step_impl.step_params['version'] if isinstance(step_impl, SingletonStep) else step_impl.constant_params['version']
-            if isinstance(step_impl, MapReduceStep):
-                step_kwargs = {
-                    **step_impl.map_params,
-                    **step_impl.constant_params
-                }
-            elif isinstance(step_impl, SingletonStep):
+    try:
+        for exp_step_name, step_impl in experiment_steps.items(): 
+            if exp_step_name not in steps_to_execute:
+                exp_step_version = step_impl.step_params['version'] if isinstance(step_impl, SingletonStep) else step_impl.constant_params['version']
+                if isinstance(step_impl, MapReduceStep):
+                    step_kwargs = {
+                        **step_impl.map_params,
+                        **step_impl.constant_params
+                    }
+                elif isinstance(step_impl, SingletonStep):
+                    step_kwargs = step_impl.step_params
+                cache_name = _get_step_cache_name(exp_step_name, exp_step_version, step_kwargs)
+                hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
+                hashed_fcache_name = os.path.join(cache_dir, hash_name)
+                logger.info(f"Step {exp_step_name} is cached at {hashed_fcache_name}, continuing.")
+                step_kwargs["step_name"] = exp_step_name
+                metadata = create_metadata(step_kwargs['version'], step_kwargs, "00:00:00", "00:00:00",
+                                        cache_dir, "cached")
+                steps_metadata.append((exp_step_name, metadata))
+                # add to cache map
+                cache_map[exp_step_name] = hashed_fcache_name
+                continue
+            if isinstance(step_impl, SingletonStep):
+                step_fn = step_wrapper(step_impl.step_fn, cache_map, cache_dir)
                 step_kwargs = step_impl.step_params
-            cache_name = _get_step_cache_name(exp_step_name, exp_step_version, step_kwargs)
-            hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
-            hashed_fcache_name = os.path.join(cache_dir, hash_name)
-            logger.info(f"Step {exp_step_name} is cached at {hashed_fcache_name}, continuing.")
-            step_kwargs["step_name"] = exp_step_name
-            metadata = create_metadata(step_kwargs['version'], step_kwargs, "00:00:00", "00:00:00",
-                                    cache_dir, "cached")
-            steps_metadata.append((exp_step_name, metadata))
-            # add to cache map
-            cache_map[exp_step_name] = hashed_fcache_name
-            continue
-        if isinstance(step_impl, SingletonStep):
-            step_fn = step_wrapper(step_impl.step_fn, cache_map, cache_dir)
-            step_kwargs = step_impl.step_params
-            step_version = step_kwargs["version"]
-            start_time = datetime.datetime.now().strftime("%H:%M:%S")
-            step_kwargs["step_name"] = exp_step_name
-            result_cache_path, execution_status = step_fn(**step_kwargs)
-            end_time = datetime.datetime.now().strftime("%H:%M:%S")
-            metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
-                                    cache_dir, execution_status)
-            steps_metadata.append((exp_step_name, metadata))
-            cache_map[exp_step_name] = result_cache_path
-        elif isinstance(step_impl, MapReduceStep):
-            start_time = datetime.datetime.now().strftime("%H:%M:%S")
-            result_cache_path, map_red_metadata = execute_map_reduce_step(exp_step_name, step_impl, cache_map, cache_dir)
-            end_time = datetime.datetime.now().strftime("%H:%M:%S")
-            final_metadata = create_metadata(step_impl.constant_params["version"],
-                                             {**step_impl.map_params, **step_impl.constant_params, "step_name": exp_step_name},
-                                            start_time, end_time, execution_status="executed",
-                                            cache_dir=cache_dir)
-            map_red_metadata.append(final_metadata)
-            steps_metadata.append([exp_step_name, map_red_metadata])
-            cache_map[exp_step_name] = result_cache_path
-            
+                step_version = step_kwargs["version"]
+                start_time = datetime.datetime.now().strftime("%H:%M:%S")
+                step_kwargs["step_name"] = exp_step_name
+                result_cache_path, execution_status = step_fn(**step_kwargs)
+                end_time = datetime.datetime.now().strftime("%H:%M:%S")
+                metadata = create_metadata(step_version, step_kwargs, start_time, end_time,
+                                        cache_dir, execution_status)
+                steps_metadata.append((exp_step_name, metadata))
+                cache_map[exp_step_name] = result_cache_path
+            elif isinstance(step_impl, MapReduceStep):
+                start_time = datetime.datetime.now().strftime("%H:%M:%S")
+                result_cache_path, map_red_metadata = execute_map_reduce_step(exp_step_name, step_impl, cache_map, cache_dir)
+                end_time = datetime.datetime.now().strftime("%H:%M:%S")
+                final_metadata = create_metadata(step_impl.constant_params["version"],
+                                                {**step_impl.map_params, **step_impl.constant_params, "step_name": exp_step_name},
+                                                start_time, end_time, execution_status="executed",
+                                                cache_dir=cache_dir)
+                map_red_metadata.append(final_metadata)
+                steps_metadata.append([exp_step_name, map_red_metadata])
+                cache_map[exp_step_name] = result_cache_path
+    except Exception as e:
+        logger.error(f"Error occurred while running step {exp_step_name}: {e}")
+        metadata = create_metadata(step_version, step_kwargs, "00:00:00", "00:00:00",
+                                        cache_dir, "failed")
+        steps_metadata.append([exp_step_name, metadata])
+        with open(run_fname, 'w') as f:
+            json.dump(steps_metadata, f, indent=4)
+        raise e
+
     # write the metadata to a json file.
     with open(run_fname, 'w') as f:
         json.dump(steps_metadata, f, indent=4)
