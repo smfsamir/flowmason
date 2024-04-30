@@ -4,6 +4,7 @@ import pdb
 from functools import partial
 from dataclasses import dataclass
 import hashlib
+from tqdm import tqdm
 from typing import Any, Tuple, Callable, Dict, OrderedDict, List, Union
 import dill
 import datetime 
@@ -152,14 +153,6 @@ def _check_should_execute_map_reduce(curr_step_name: str,
                 singletons_changed = True
     return should_execute_general or singletons_changed
 
-
-    # for 4, we need to iterate through 
-
-    
-
-    pass
-
-
 def step_wrapper(step_func, cache_map: Dict[str, str], cache_dir: str):
     def wrapper(*args, **kwargs):
         step_name = kwargs["step_name"]
@@ -194,7 +187,7 @@ def execute_map_reduce_step(mapreduce_step_name: str,
     map_params = map_reduce_step.map_params
     num_map_param_settings = map_params[list(map_params.keys())[0]]
     final_result_paths = []
-    for i in range(len(num_map_param_settings)):
+    for i in tqdm(range(len(num_map_param_settings))):
         map_param_setting_cache = {}
         map_kwargs = {k: v[i] for k, v in map_params.items()}
         # add the constant params to the map_kwargs
