@@ -23,6 +23,8 @@ class MapReduceStep:
     map_params: Dict[str, List] 
     constant_params: Dict[str, Any]
     reduce_fn: Callable
+    key_kwarg: str # key_kwarg must be a key in the map_params
+    ignore_exceptions: bool = False
 
 CACHE_DIR = "cache"
 logger = loguru.logger
@@ -98,7 +100,8 @@ def get_singleton_map_reduce_cache_name(map_reduce_step_name: str,
                                         singleton_step_name: str,
                                         singleton_step_version: str,
                                         singleton_step_kwargs: Dict[str, Any], 
-                                        map_kwargs: Dict[str, Any]):
+                                        map_kwargs: Dict[str, Any], 
+                                        key_kwarg):
     """Get the cache name for a singleton step in a map reduce step.
 
     Args:
@@ -112,9 +115,10 @@ def get_singleton_map_reduce_cache_name(map_reduce_step_name: str,
             and MapReduceStep.constant_params
     """
     # use _get_step_cache_name function with all of the provided parameters to get the cache name for the singleton step
-    step_name = f"{map_reduce_step_name}_{singleton_step_name}_{map_reduce_iteration}"
+    step_name = _get_individual_step_name_in_map(map_reduce_step_name, singleton_step_name, map_kwargs, map_reduce_iteration, key_kwarg)
     singleton_step_cache_name = _get_step_cache_name(
-        f"{map_reduce_step_name}_{singleton_step_name}_{map_reduce_iteration}",
+        # f"{map_reduce_step_name}_{singleton_step_name}_{map_reduce_iteration}",
+        step_name,
         singleton_step_version,
         {**map_kwargs, **singleton_step_kwargs, "step_name": step_name}, # NOTE: watch out for inconsistencies in the ordering of the map_kwargs and singleton_step_kwargs
     )
@@ -124,6 +128,7 @@ def _check_should_execute_map_reduce(curr_step_name: str,
                                      cache_dir: str,
                                      map_reduce_arguments: Dict[str, Any], 
                                      constant_params: Dict[str, Any],
+                                     key_kwarg: str,
                                      previous_steps_to_execute_names: List[str], 
                                      singleton_steps: OrderedDict[str, SingletonStep]):
     # Conditions under which the map reduce step should be re-executed
@@ -147,7 +152,7 @@ def _check_should_execute_map_reduce(curr_step_name: str,
                             **singleton_step_impl.step_params, 
                             "step_name": f"{curr_step_name}_{singleton_step_name}_{i}"
                     }
-            cache_name = get_singleton_map_reduce_cache_name(curr_step_name, i, singleton_step_name, singleton_step_impl.step_params['version'], singleton_step_impl.step_params, map_kwargs)
+            cache_name = get_singleton_map_reduce_cache_name(curr_step_name, i, singleton_step_name, singleton_step_impl.step_params['version'], singleton_step_impl.step_params, map_kwargs, key_kwarg)
             should_execute_singleton = _check_should_execute(cache_name,  fn_kwargs, cache_dir, previous_steps_to_execute_names)
             if should_execute_singleton:
                 singletons_changed = True
@@ -176,6 +181,10 @@ def step_wrapper(step_func, cache_map: Dict[str, str], cache_dir: str):
             return "no result to cache", "executed"
     return wrapper
 
+def _get_individual_step_name_in_map(mapreduce_step_name, singleton_step_name, map_kwargs, i, key_kwarg):
+    key_value = map_kwargs[key_kwarg]
+    return f"{mapreduce_step_name}_{singleton_step_name}_{key_kwarg}={key_value}"
+
 def execute_map_reduce_step(mapreduce_step_name: str, 
                             map_reduce_step: MapReduceStep, 
                             cache_map: Dict[str, str], cache_dir: str):
@@ -198,9 +207,9 @@ def execute_map_reduce_step(mapreduce_step_name: str,
             fn_kwargs = {
                             **map_kwargs, 
                             **singleton_step_impl.step_params, 
-                            "step_name": f"{mapreduce_step_name}_{singleton_step_name}_{i}"
+                            "step_name": _get_individual_step_name_in_map(mapreduce_step_name, singleton_step_name, map_kwargs, i, map_reduce_step.key_kwarg)
                     }
-            cache_name = get_singleton_map_reduce_cache_name(mapreduce_step_name, i, singleton_step_name, singleton_step_impl.step_params['version'], singleton_step_impl.step_params, map_kwargs)
+            cache_name = get_singleton_map_reduce_cache_name(mapreduce_step_name, i, singleton_step_name, singleton_step_impl.step_params['version'], singleton_step_impl.step_params, map_kwargs, map_reduce_step.key_kwarg)
             should_execute = _check_should_execute(cache_name, 
                                                 fn_kwargs, 
                                                 cache_dir, 
@@ -212,15 +221,16 @@ def execute_map_reduce_step(mapreduce_step_name: str,
             fn_kwargs = {
                 **map_kwargs, 
                 **singleton_step_impl.step_params, 
-                "step_name": f"{mapreduce_step_name}_{singleton_step_name}_{i}"
+                "step_name": _get_individual_step_name_in_map(mapreduce_step_name, singleton_step_name, map_kwargs, i, map_reduce_step.key_kwarg)
+                # "step_name": f"{mapreduce_step_name}_{singleton_step_name}_{i}",
             }
 
             if singleton_step_name not in map_steps_to_execute:
                 cache_name = _get_step_cache_name(
-                        f"{mapreduce_step_name}_{singleton_step_name}_{i}", 
-                        singleton_step_impl.step_params['version'], 
-                        fn_kwargs
-                    )
+                    _get_individual_step_name_in_map(mapreduce_step_name, singleton_step_name, map_kwargs, i, map_reduce_step.key_kwarg),
+                    singleton_step_impl.step_params['version'], 
+                    fn_kwargs
+                )
                 hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
                 result_cache_path = os.path.join(cache_dir, hash_name)
                 logger.info(f"Step {singleton_step_name} is cached at {result_cache_path}, continuing.")
@@ -277,10 +287,12 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
             # the params are the combination of the map params and the constant params.
             # TODO: the execution check should be differnt for map reduce steps --
             # we should also check if any of the underlying singleton step implementations have changed.
+            key_kwarg = curr_step_impl.key_kwarg
             should_execute = _check_should_execute_map_reduce(curr_step_name,
                                                 cache_dir,
                                                 curr_step_impl.map_params, 
                                                 curr_step_impl.constant_params,
+                                                key_kwarg,
                                                 steps_to_execute, 
                                                 curr_step_impl.step_fns)
         else:
