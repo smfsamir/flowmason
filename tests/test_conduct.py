@@ -1,3 +1,4 @@
+import ipdb
 import math
 import dill
 import json
@@ -14,8 +15,29 @@ def _step_toy_fn(step_name, version,
     print(arg1)
     return 3.1 + arg1
 
+
 def test_conduct():
     assert True
+
+def _step_unknown_exception(step_name, version,
+                            arg1: float):
+    if arg1 == 6.2:
+        raise UnknownException("Unknown exception")
+    else:
+        return 3.1 + arg1
+# create an exception called RandomException
+class RandomException(Exception):
+    pass
+
+class UnknownException(Exception):
+    pass
+
+def _step_toy_fn_w_exception(step_name, version, 
+                 arg1: float):
+    if arg1==6.2:
+        raise RandomException("Random exception")
+    else: 
+        return 3.1 + arg1
 
 @pytest.fixture
 def cache_dir():
@@ -37,7 +59,7 @@ def test_map_reduce_steps(cache_dir):
         map_reduce_dict,
         {"arg1": [2.9, 3.0, 3.1]}, 
         {"version": "001"},
-    sum)
+    sum, 'arg1')
     conduct(cache_dir, step_dict, "test_orchestration")
     with open("outputs/test_orchestration/run_0000.json", 'r') as f:
         obj = json.load(f)
@@ -207,3 +229,41 @@ def test_map_reduce_should_execute_updated_singletons(cache_dir):
         # TODO: need to fix this
         assert obj[0][1][first_step_index][1]['execution_status'] == "cached"
         assert obj[0][1][second_step_index][1]['execution_status'] == "executed"
+
+def test_map_reduce_error_step(cache_dir):
+    mr_step = MapReduceStep(
+        {"step_toy_fn": SingletonStep(_step_toy_fn, {
+            'version': '001'
+        }), 
+        "step_toy_fn_two": SingletonStep(_step_toy_fn_w_exception, {
+            'version': '001',
+            'arg1': 'step_toy_fn'
+        })},
+        {"arg1": [2.9, 3.0, 3.1]}, 
+        {"version": "001"}, 
+        sum, 'arg1', [RandomException])
+    step_dict = OrderedDict()
+    step_dict['step_map_reduce'] = mr_step
+    conduct(cache_dir, step_dict, "test_orchestration")
+    with open("outputs/test_orchestration/run_0000.json", 'r') as f:
+        obj = json.load(f)
+        with open(obj[0][1][-1]['cache_path'], 'rb') as f:
+            result = dill.load(f)
+            assert result == (3.1 + 2.9 + 3.1) + (3.1 + 3.0 + 3.1) # + (3.1 + 3.1 + 3.1), because the second step should fail on the last input
+
+def test_map_reduce_unknown_error(cache_dir):
+    mr_step = MapReduceStep(
+        {"step_toy_fn": SingletonStep(_step_toy_fn, {
+            'version': '001'
+        }), 
+        "step_toy_fn_two": SingletonStep(_step_unknown_exception, {
+            'version': '001',
+            'arg1': 'step_toy_fn'
+        })},
+        {"arg1": [2.9, 3.0, 3.1]}, 
+        {"version": "001"}, 
+        sum, 'arg1', [RandomException])
+    step_dict = OrderedDict()
+    step_dict['step_map_reduce'] = mr_step
+    with pytest.raises(UnknownException):
+        conduct(cache_dir, step_dict, "test_orchestration")
