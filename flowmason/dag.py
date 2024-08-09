@@ -1,4 +1,6 @@
 import ipdb
+import ipdb
+import polars as pl
 from functools import partial
 from dataclasses import dataclass
 import hashlib
@@ -87,8 +89,12 @@ def _check_should_execute(cache_name: str, curr_step_arguments: Dict[str, Any],
     hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
     hashed_fcache_name = os.path.join(cache_dir, hash_name)
     for step in previous_steps_to_execute:
-        if step in curr_step_arguments.values(): # TODO: in this case, we should delete the previously cached value for this step. This will fix a substantial bug.
-            return True 
+        try:
+            if step in curr_step_arguments.values(): # TODO: in this case, we should delete the previously cached value for this step. This will fix a substantial bug.
+                return True 
+        except pl.exceptions.ComputeError:
+            logger.error(step)
+            ipdb.set_trace()
     if not os.path.exists(hashed_fcache_name):
         return True
     return False
