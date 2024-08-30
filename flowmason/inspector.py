@@ -1,3 +1,4 @@
+from typing import Iterable
 import ipdb
 import dill
 from typing import Tuple, Dict
@@ -27,5 +28,15 @@ def load_artifact_with_step_name(metadata, step_name):
     logger.error(f"Step {step_name} not found in metadata")
     return -1
 
-def get_all_files_in_metadata(metadata):
+def get_all_files_in_metadata(metadata: Iterable):
+    cache_paths = []
+    for cache_item in metadata:
+        if isinstance(cache_item, tuple): # singleton step  
+            cache_paths.append(cache_item[1]["cache_path"])
+        elif isinstance(cache_item, list): # map reduce step
+            for i in range(len(cache_item[1]) - 1): # NOTE: 0 is the name of the map reduce step
+                # i is the index over the map items
+                cache_paths.append(cache_item[1][i][1]["cache_path"])
+            cache_paths.append(cache_item[1][-1]["cache_path"])
     ipdb.set_trace()
+    return cache_paths
