@@ -1,3 +1,4 @@
+import ipdb
 from functools import partial
 from dataclasses import dataclass
 import hashlib
@@ -262,7 +263,17 @@ def execute_map_reduce_step(mapreduce_step_name: str,
     # use the reduce function to combine the results.
     reduce_fn = map_reduce_step.reduce_fn
     # load all of the results from the final_result_paths using dill.load
-    final_results = [dill.load(open(path, 'rb')) for path in final_result_paths]
+    final_results = []
+    for i in range(len(final_result_paths)):
+        try:
+            final_results.append(dill.load(open(final_result_paths[i], 'rb')))
+        except EOFError:
+            # os.remove(final_result_paths[i])
+            print(f"EOFError for {i}")
+            continue
+        except TypeError:
+            # os.remove(final_result_paths[i])
+            logger.error(f"TypeError for {i} at {final_result_paths[i]}")
     final_result = reduce_fn(final_results)
     # create all_map_kwargs by combining constant_params and map_kwargs
     all_map_kwargs = {**map_reduce_step.map_params, **map_reduce_step.constant_params, "step_name": mapreduce_step_name}
@@ -281,7 +292,11 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
     steps_to_execute = []
     for curr_step_name, curr_step_impl in experiment_steps.items():
         if isinstance(curr_step_impl, SingletonStep):
-            cache_name = _get_step_cache_name(curr_step_name, curr_step_impl.step_params['version'], curr_step_impl.step_params)
+            try:
+                cache_name = _get_step_cache_name(curr_step_name, curr_step_impl.step_params['version'], curr_step_impl.step_params)
+            except KeyError as e:
+                logger.error(f"Step {curr_step_name} does not have a version parameter.")
+                raise e
             should_execute = _check_should_execute(cache_name, 
                                                 curr_step_impl.step_params, 
                                                 cache_dir, 
@@ -306,15 +321,15 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
     steps_metadata = []
     cache_map = {}
     for exp_step_name, step_impl in experiment_steps.items(): 
-        if exp_step_name not in steps_to_execute:
+        if exp_step_name not in steps_to_execute and isinstance(step_impl, SingletonStep):
             exp_step_version = step_impl.step_params['version'] if isinstance(step_impl, SingletonStep) else step_impl.constant_params['version']
-            if isinstance(step_impl, MapReduceStep):
-                step_kwargs = {
-                    **step_impl.map_params,
-                    **step_impl.constant_params
-                }
-            elif isinstance(step_impl, SingletonStep):
-                step_kwargs = step_impl.step_params
+            # if isinstance(step_impl, MapReduceStep):
+            #     step_kwargs = {
+            #         **step_impl.map_params,
+            #         **step_impl.constant_params
+            #     }
+            # elif isinstance(step_impl, SingletonStep):
+            step_kwargs = step_impl.step_params
             cache_name = _get_step_cache_name(exp_step_name, exp_step_version, step_kwargs)
             hash_name = hashlib.sha256(cache_name.encode()).hexdigest()
             hashed_fcache_name = os.path.join(cache_dir, hash_name)
@@ -362,3 +377,4 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
     with open(run_fname, 'w') as f:
         json.dump(steps_metadata, f, indent=4)
     return steps_metadata
+

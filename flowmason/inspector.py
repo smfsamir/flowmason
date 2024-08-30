@@ -1,3 +1,4 @@
+import ipdb
 import dill
 from typing import Tuple, Dict
 import json
@@ -25,3 +26,6 @@ def load_artifact_with_step_name(metadata, step_name):
             return load_artifact(step)
     logger.error(f"Step {step_name} not found in metadata")
     return -1
+
+def get_all_files_in_metadata(metadata):
+    ipdb.set_trace()
