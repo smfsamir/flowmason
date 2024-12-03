@@ -20,11 +20,20 @@ def load_artifact(step: Tuple[str, Dict[str, str]]):
     artifact_path = step[1]["cache_path"]
     with open(artifact_path, 'rb') as f:
         return dill.load(f)
+    
+def load_mr_artifact(step: Tuple[str, Dict[str, str]]):
+    artifact_path = step[1][-1]["cache_path"]
+    with open(artifact_path, 'rb') as f:
+        return dill.load(f)
 
-def load_artifact_with_step_name(metadata, step_name):
+def load_artifact_with_step_name(metadata, step_name, is_mr_step = False):
     for step in metadata:
-        if step[0] == step_name:
-            return load_artifact(step)
+        if is_mr_step:
+            if step[0][0] == step_name:
+                return load_mr_artifact(step)
+        else:
+            if step[0] == step_name:
+                return load_artifact(step)
     logger.error(f"Step {step_name} not found in metadata")
     return -1
 
@@ -38,5 +47,5 @@ def get_all_files_in_metadata(metadata: Iterable):
                 # i is the index over the map items
                 cache_paths.append(cache_item[1][i][1]["cache_path"])
             cache_paths.append(cache_item[1][-1]["cache_path"])
-    ipdb.set_trace()
     return cache_paths
+
