@@ -260,7 +260,7 @@ def conduct(cache_dir: str, experiment_steps: OrderedDict[str, Union[SingletonSt
     experiment_dir = os.path.join("outputs", experiment_name)
     if not os.path.exists(experiment_dir):
         run_fname = os.path.join(experiment_dir, "run_0000.json")
-        os.makedirs(experiment_dir)
+        os.makedirs(experiment_dir, exist_ok=True)
     else:
         run_num = len(os.listdir(experiment_dir))
         run_num_str = str(run_num).zfill(4)
